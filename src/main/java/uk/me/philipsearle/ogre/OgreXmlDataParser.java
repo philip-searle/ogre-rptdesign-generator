@@ -2,7 +2,6 @@ package uk.me.philipsearle.ogre;
 
 import java.io.InputStream;
 import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.List;
 
 import org.dom4j.Document;
@@ -30,9 +29,14 @@ public class OgreXmlDataParser {
 					childElement.getName(),
 					childElement.attributeValue("label"),
 					parentField);
+
 			if (childElement.element("value") != null) {
+				System.out.println("Descending into compound field: " + childField.getUniqueId());
 				buildFieldTree(childField, childElement.element("value"));
-			} else if (childElement.elements("values").size() > 1) {
+			}
+
+			if (childElement.elements("value").size() > 1) {
+				System.out.println("Found multi-valued field: " + childField.getUniqueId());
 				childField.setMultiValued(true);
 			}
 		}
@@ -88,5 +92,9 @@ class OgreField {
 
 	public String getValueXPathRelativeTo(OgreField ancestor) {
 		return getValueXPath().substring(ancestor.getValueXPath().length());
+	}
+
+	public boolean isMultiValued() {
+		return multiValued;
 	}
 }

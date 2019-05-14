@@ -40,8 +40,6 @@ class Application {
 			OgreXmlDataParser parser = new OgreXmlDataParser();
 			OgreField rootField = parser.extractFieldsFromOgreXml(is);
 
-			// Deprecated method, I know... 
-			//SessionHandle session = DesignEngine.newSession(ULocale.ENGLISH);
 			SessionHandle session = new DesignEngine(new DesignConfig()).newSessionHandle(ULocale.ENGLISH);
 			designHandle = session.createDesign();
 			designFactory = designHandle.getElementFactory();
@@ -61,7 +59,7 @@ class Application {
 		designHandle.getDataSources().add(dsHandle);
 	}
 
-	void buildDataSet(String dataSetName, OgreField dataSetField) throws SemanticException {
+	void buildDataSet(String baseDataSetName, OgreField dataSetField) throws SemanticException {
 		OdaDataSetHandle dsHandle = designFactory.newOdaDataSet(DATA_SET_NAME + dataSetField.getUniqueId(),
 				XML_ODA_DATA_SET_ID);
 		dsHandle.setDataSource(DATA_SOURCE_NAME);
@@ -71,6 +69,11 @@ class Application {
 		queryText.append(dataSetField.getValueXPath());
 		queryText.append("]#:#");
 		for (OgreField childField : dataSetField.children()) {
+			if (childField.isMultiValued()) {
+				buildDataSet(dsHandle.getName(), childField);
+				continue;
+			}
+
 			queryText.append('{');
 			queryText.append(childField.getName());
 			queryText.append(";STRING;");
