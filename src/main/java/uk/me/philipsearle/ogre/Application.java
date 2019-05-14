@@ -1,95 +1,186 @@
 package uk.me.philipsearle.ogre;
 
-import java.io.FileInputStream;
+import java.awt.BorderLayout;
+import java.awt.Component;
+import java.awt.Container;
+import java.awt.Dimension;
+import java.awt.event.ActionEvent;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URI;
+import java.util.List;
+
+import javax.swing.JButton;
+import javax.swing.JCheckBox;
+import javax.swing.JFileChooser;
+import javax.swing.JFrame;
+import javax.swing.JOptionPane;
+import javax.swing.JScrollPane;
+import javax.swing.JTable;
+import javax.swing.JTree;
+import javax.swing.table.AbstractTableModel;
+import javax.swing.table.DefaultTableColumnModel;
+import javax.swing.tree.TreeCellRenderer;
 
 import org.dom4j.DocumentException;
-import org.eclipse.birt.report.model.api.DesignConfig;
-import org.eclipse.birt.report.model.api.DesignEngine;
 import org.eclipse.birt.report.model.api.DesignFileException;
-import org.eclipse.birt.report.model.api.ElementFactory;
-import org.eclipse.birt.report.model.api.OdaDataSetHandle;
-import org.eclipse.birt.report.model.api.OdaDataSourceHandle;
-import org.eclipse.birt.report.model.api.ReportDesignHandle;
-import org.eclipse.birt.report.model.api.SessionHandle;
-import org.eclipse.birt.report.model.api.SimpleMasterPageHandle;
 import org.eclipse.birt.report.model.api.activity.SemanticException;
 
-import com.ibm.icu.util.ULocale;
-
 class Application {
+	private final OgreXmlDataParser ogreXmlDataParser;
+	private final BirtDesignGenerator birtDesignGenerator;
 
-	/** FIXME: There are constants for all of these this somewhere in the BIRT IOda* interfaces... */
-	private static final String XML_ODA_DATA_SOURCE_ID = "org.eclipse.datatools.enablement.oda.xml";
-	private static final String XML_ODA_DATA_SET_ID = "org.eclipse.datatools.enablement.oda.xml.dataSet";
+	private URI previewXmlUrl;
+	private OgreField rootField;
 
-	private static final String DATA_SOURCE_NAME = "Data Source";
-	private static final String DATA_SET_NAME = "Data Set";
-
-	private ReportDesignHandle designHandle = null;
-	private ElementFactory designFactory = null;
+	// UI nonsense
+	private JFrame mainWindow;
+	private JButton loadButton;
+	private JButton generateButton;
+	private JTable fieldTable;
 
 	public static void main(String[] args) throws SemanticException, IOException, DesignFileException, DocumentException {
-		new Application().buildReport();
+		new Application();
 	}
 
-	void buildReport() throws SemanticException, IOException, DesignFileException, DocumentException {
-		String xmlUrl = "D:\\Downloads\\data.xml";
-		try (InputStream is = new FileInputStream(xmlUrl)) {
-			OgreXmlDataParser parser = new OgreXmlDataParser();
-			OgreField rootField = parser.extractFieldsFromOgreXml(is);
+	public Application() {
+		this.ogreXmlDataParser = new OgreXmlDataParser();
+		this.birtDesignGenerator = new BirtDesignGenerator();
 
-			SessionHandle session = new DesignEngine(new DesignConfig()).newSessionHandle(ULocale.ENGLISH);
-			designHandle = session.createDesign();
-			designFactory = designHandle.getElementFactory();
+		this.mainWindow = new JFrame("BIRT .rptdesign Generator for Ogre");
+		this.mainWindow.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+		this.mainWindow.setMinimumSize(new Dimension(320, 200));
+		this.mainWindow.setPreferredSize(new Dimension(800, 600));
 
-			buildMasterPages();
-			buildDataSource(xmlUrl);
-			buildDataSet("Data Set", rootField);
+		Container pane = this.mainWindow.getContentPane();
 
-			designHandle.saveAs("D:\\Downloads\\Sample2.rptdesign");
-		}
+		this.loadButton = new JButton();
+		this.loadButton.setText("Load Ogre Data Source XML Preview");
+		this.loadButton.addActionListener(this::selectPreviewXmlUrl);
+		pane.add(this.loadButton, BorderLayout.PAGE_START);
+
+		this.generateButton = new JButton();
+		this.generateButton.setText("Generate BIRT .rptdesign");
+		this.generateButton.addActionListener(this::generateReport);
+		pane.add(this.generateButton, BorderLayout.PAGE_END);
+
+		this.fieldTable = new JTable();
+		this.fieldTable.setColumnModel(new DefaultTableColumnModel());
+		pane.add(new JScrollPane(this.fieldTable), BorderLayout.CENTER);
+
+		this.mainWindow.pack();
+		this.mainWindow.setVisible(true);
 	}
 
-	void buildDataSource(String xmlUrl) throws SemanticException {
-		OdaDataSourceHandle dsHandle = designFactory.newOdaDataSource(DATA_SOURCE_NAME, XML_ODA_DATA_SOURCE_ID);
-		dsHandle.setProperty("FILELIST", xmlUrl);
-
-		designHandle.getDataSources().add(dsHandle);
-	}
-
-	void buildDataSet(String baseDataSetName, OgreField dataSetField) throws SemanticException {
-		OdaDataSetHandle dsHandle = designFactory.newOdaDataSet(DATA_SET_NAME + dataSetField.getUniqueId(),
-				XML_ODA_DATA_SET_ID);
-		dsHandle.setDataSource(DATA_SOURCE_NAME);
-		
-		StringBuilder queryText = new StringBuilder();
-		queryText.append("table0#-TNAME-#table0#:#[");
-		queryText.append(dataSetField.getValueXPath());
-		queryText.append("]#:#");
-		for (OgreField childField : dataSetField.children()) {
-			if (childField.isMultiValued()) {
-				buildDataSet(dsHandle.getName(), childField);
-				continue;
+	private void selectPreviewXmlUrl(ActionEvent evt) {
+		String response = JOptionPane.showInputDialog(mainWindow, "Enter the URL to the Ogre XML preview", "Ogre Data Source XML Preview", JOptionPane.OK_CANCEL_OPTION);
+		try {
+			previewXmlUrl = URI.create(response);
+			try (InputStream is = previewXmlUrl.toURL().openStream()) {
+				rootField = ogreXmlDataParser.extractFieldsFromOgreXml(is);
+				fieldTable.setModel(new OgreFieldTableModel(rootField.flatten()));
 			}
-
-			queryText.append('{');
-			queryText.append(childField.getName());
-			queryText.append(";STRING;");
-			queryText.append(childField.getValueXPathRelativeTo(dataSetField));
-			queryText.append("},");
+		} catch (RuntimeException | IOException | DocumentException e) {
+			e.printStackTrace();
+			JOptionPane.showMessageDialog(mainWindow, e + ": " + e.getMessage());
 		}
-		queryText.deleteCharAt(queryText.length() - 1);
-		queryText.append('}');
-		dsHandle.setQueryText(queryText.toString());
-
-		designHandle.getDataSets().add(dsHandle);
-
 	}
 
-	private void buildMasterPages() throws SemanticException {
-		SimpleMasterPageHandle masterpage = (SimpleMasterPageHandle) designFactory.newSimpleMasterPage("Simple MasterPage");
-		designHandle.getMasterPages().add(masterpage);
+	void generateReport(ActionEvent evt) {
+		try {
+			JFileChooser fileChooser = new JFileChooser();
+			if (fileChooser.showSaveDialog(mainWindow) == JFileChooser.APPROVE_OPTION) {
+				birtDesignGenerator.saveDesignToFile(previewXmlUrl.toString(), rootField, fileChooser.getSelectedFile().getAbsolutePath());
+			}
+		} catch (RuntimeException | SemanticException | IOException e) {
+			e.printStackTrace();
+			JOptionPane.showMessageDialog(mainWindow, e + ": " + e.getMessage());
+		}
+	}
+}
+
+class CheckboxRenderer implements TreeCellRenderer {
+	private JCheckBox checkbox = new JCheckBox();
+
+	@Override
+	public Component getTreeCellRendererComponent(JTree tree, Object value, boolean selected, boolean expanded, boolean leaf, int row, boolean hasFocus) {
+		if (value instanceof OgreField) {
+			checkbox.setSelected(((OgreField) value).isMultiValued());
+		}
+		checkbox.setText(value.toString());
+		return checkbox;
+	}
+	
+}
+
+class OgreFieldTableModel extends AbstractTableModel {
+	private static final long serialVersionUID = 1L;
+
+	private final List<OgreField> flatFields;
+
+	public OgreFieldTableModel(List<OgreField> flatFields) {
+		this.flatFields = flatFields;
+	}
+
+	@Override
+	public int getColumnCount() {
+		return 2;
+	}
+
+	@Override
+	public int getRowCount() {
+		return flatFields.size();
+	}
+
+	@Override
+	public Object getValueAt(int row, int column) {
+		switch (column) {
+		case 0:
+			return flatFields.get(row).getUniqueId();
+		case 1:
+			return flatFields.get(row).isMultiValued();
+		default:
+			throw new IllegalStateException("Bad column: " + column);
+		}
+	}
+
+	@Override
+	public String getColumnName(int column) {
+		switch (column) {
+		case 0:
+			return "Field";
+		case 1:
+			return "Is Multi-Valued?";
+		default:
+			throw new IllegalStateException("Bad column: " + column);
+		}
+	}
+
+	@Override
+	public Class<?> getColumnClass(int columnIndex) {
+		switch (columnIndex) {
+		case 0:
+			return String.class;
+		case 1:
+			return Boolean.class;
+		default:
+			throw new IllegalStateException("Bad column: " + columnIndex);
+		}
+	}
+
+	@Override
+	public boolean isCellEditable(int rowIndex, int columnIndex) {
+		return columnIndex == 1;
+	}
+
+	@Override
+	public void setValueAt(Object aValue, int rowIndex, int columnIndex) {
+		switch (columnIndex) {
+		case 1:
+			flatFields.get(rowIndex).setMultiValued((Boolean) aValue);
+			break;
+		default:
+			throw new IllegalStateException("Bad column: " + columnIndex);
+		}
 	}
 }
